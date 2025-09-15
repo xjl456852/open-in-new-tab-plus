@@ -1,0 +1,10 @@
+{
+	"id": "open-in-new-tab-plus",
+	"name": "Open markdown In New Tab",
+	"version": "1.0.10",
+	"minAppVersion": "0.15.1",
+	"description": "Opens files in new tabs,contains explorer,search,bookmark",
+	"author": "xjl456852",
+	"authorUrl": "https://github.com/xjl456852/open-in-new-tab-plus",
+	"isDesktopOnly": false
+}

@@ -88,6 +88,10 @@ export default class OpenInNewTabPlugin extends Plugin {
 				return;
 			}
 			
+			// Check for internal note links (links within note content)
+			const internalLinkEl = target?.closest("a.cm-underline");
+			const isInternalLink = internalLinkEl && !target?.closest(".nav-file") && !target?.closest(".search-result") && !target?.closest(".bookmark");
+			
 			// Check for file explorer navigation
 			const isNavFile =
 				target?.classList?.contains("nav-file-title") ||
@@ -125,7 +129,10 @@ export default class OpenInNewTabPlugin extends Plugin {
 			let path: string | null = null;
 
 			// Get the file path based on the clicked element
-			if (isNavFile && navTitleEl) {
+			if (isInternalLink && internalLinkEl) {
+				// Internal note link - extract path from href or data attributes
+				path = this.extractPathFromInternalLink(internalLinkEl);
+			} else if (isNavFile && navTitleEl) {
 				// File explorer
 				path = navTitleEl.getAttribute("data-path");
 			} else if ((isSearchResultTitle || isSearchResultMatch) && searchResultEl) {
@@ -156,8 +163,33 @@ export default class OpenInNewTabPlugin extends Plugin {
 					}
 				});
 
+				// Handle internal links
+				if (isInternalLink) {
+					if (!fileAlreadyOpen) {
+						// Open in new tab if not already open
+						event.stopPropagation();
+						event.preventDefault();
+						
+						// Check for empty tabs first
+						const emptyLeaves = appInstance.workspace.getLeavesOfType("empty");
+						if (emptyLeaves.length > 0) {
+							appInstance.workspace.setActiveLeaf(emptyLeaves[0]);
+							// Let the default handler open the file in the empty tab
+							setTimeout(() => {
+								appInstance.workspace.openLinkText(normalizedPath, "", false);
+							}, 0);
+						} else {
+							// Open in new tab
+							appInstance.workspace.openLinkText(normalizedPath, "", true);
+						}
+					} else {
+						// File is already open, we've activated it, prevent default
+						event.stopPropagation();
+						event.preventDefault();
+					}
+				}
 				// Handle search results differently based on what was clicked
-				if (isSearchResultTitle) {
+				else if (isSearchResultTitle) {
 					// Title click - handle tab activation/creation
 					if (!fileAlreadyOpen) {
 						// If we have a "New Tab" tab open, just switch to that and let
@@ -230,6 +262,80 @@ export default class OpenInNewTabPlugin extends Plugin {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Extract file path from internal note link
+	 */
+	private extractPathFromInternalLink(linkEl: Element): string | null {
+		// Try to get the href attribute
+		const href = linkEl.getAttribute("href");
+		if (href && href !== "#") {
+			// Decode the URL-encoded path
+			const decodedPath = decodeURIComponent(href);
+			// Remove any leading hash or relative path indicators
+			let cleanPath = decodedPath.replace(/^#/, '').replace(/^\.\//, '').replace(/^\.\.\//, '');
+			
+			// If it's a relative path with multiple ../, resolve it
+			if (decodedPath.includes('../')) {
+				// Get the current file path
+				const activeFile = this.app.workspace.getActiveFile();
+				if (activeFile) {
+					const currentDir = activeFile.parent?.path || '';
+					// Count how many levels to go up
+					const upLevels = (decodedPath.match(/\.\.\//g) || []).length;
+					// Split current directory and go up the required levels
+					const dirParts = currentDir.split('/').filter(p => p);
+					for (let i = 0; i < upLevels && dirParts.length > 0; i++) {
+						dirParts.pop();
+					}
+					// Remove all ../ from the path
+					cleanPath = decodedPath.replace(/(\.\.\/)*/g, '');
+					// Combine the resolved directory with the file path
+					if (dirParts.length > 0) {
+						cleanPath = dirParts.join('/') + '/' + cleanPath;
+					}
+				}
+			}
+			
+			// Remove .md extension if present (will be added back in normalizePath if needed)
+			cleanPath = cleanPath.replace(/\.md$/, '');
+			
+			return cleanPath;
+		}
+		
+		// Try to get from data attributes or Obsidian's internal properties
+		const anyEl = linkEl as any;
+		
+		// Check for Obsidian's internal file reference
+		const file = anyEl.file ||
+					anyEl._file ||
+					anyEl.dataset?.href ||
+					anyEl.dataset?.path ||
+					anyEl.__vueParentComponent?.props?.file ||
+					anyEl.__reactInternalInstance?.memoizedProps?.file;
+		
+		if (file) {
+			if (typeof file === 'string') {
+				return file;
+			} else if (file.path) {
+				return file.path;
+			}
+		}
+		
+		// Try to extract from link text if it looks like a file name
+		const linkText = linkEl.textContent?.trim();
+		if (linkText) {
+			// Try to find the file in the vault by name
+			const files = this.app.vault.getFiles();
+			for (const file of files) {
+				if (file.basename === linkText || file.name === linkText) {
+					return file.path;
+				}
+			}
+		}
+		
+		return null;
 	}
 
 	/**
